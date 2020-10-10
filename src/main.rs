@@ -245,7 +245,7 @@ fn make_pieces() -> Vec<VertexProperty> {
     pieces.push(VertexProperty {
         role: Role::Source,
         passenger: Passenger::Orange,
-        coord: Coord::new(2, 5),
+        coord: Coord::new(2, 6),
     });
     pieces.push(VertexProperty {
         role: Role::Source,
