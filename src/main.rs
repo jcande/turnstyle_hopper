@@ -7,6 +7,9 @@ use self::types::{Role, Passenger, Coord, OrderByPassenger, VertexProperty};
 mod cmd_tree;
 use self::cmd_tree::{CmdTree, CmdNode, CmdNodeId};
 
+mod path_state;
+use self::path_state::{PathState};
+
 
 #[derive(Debug)]
 struct Route {
@@ -19,6 +22,17 @@ struct Route {
     // use the tree for that
     arena: CmdTree,
     root: CmdNodeId,
+}
+
+enum RouteErr {
+    // Somehow we ascended beyond the root. This is definitely a bug.
+    ImpossibleLevel,
+
+    // Somehow path.remove_waypoint() failed. This is definitely a bug.
+    UnableToBacktrack,
+
+    // Couldn't solve the map
+    Unsat
 }
 
 impl Route {
@@ -53,21 +67,18 @@ impl Route {
     // is the thing that we need to modify to "ascend".
     //
 
-    pub fn find_route(&mut self) -> () {
+    pub fn find_route(&mut self) -> Result<(), RouteErr> {
         // We should at least have a root node from the constructor
         assert!(!self.arena.is_empty());
-        let mut current: indextree::NodeId = self.root;
-
-        // Create an empty car.
-        let mut car: HashSet<Passenger> = HashSet::with_capacity(self.capacity);
-
-        let mut route_choices: HashSet<VertexProperty> = HashSet::new();
-        while route_choices.len() != self.pieces.len() {
+        let mut path = PathState::new(self.root, self.capacity);
+        while path.len() != self.pieces.len() {
             //
             // Figure out what choices we've made in the past.
             //
+            let current = path.current_level()
+                .ok_or(RouteErr::ImpossibleLevel)?;
             let mut past_choices: HashSet<VertexProperty> = HashSet::new();
-            if let Some(first_of_kin) = &self.arena[current].first_child() {
+            if let Some(first_of_kin) = &self.arena[*current].first_child() {
                 for childId in first_of_kin.following_siblings(&self.arena) {
                     if let CmdNode::Choose(passenger_type) = &self.arena[childId].get() {
                         past_choices.insert(passenger_type.clone());
@@ -88,7 +99,7 @@ impl Route {
                 .cloned()
                 .collect();
             let remaining_choices: HashSet<VertexProperty> = remaining_choices
-                .difference(&route_choices)
+                .difference(&path.choices)
                 .cloned()
                 .collect();
             let mut q: BinaryHeap<OrderByPassenger> = remaining_choices
@@ -105,89 +116,39 @@ impl Route {
             //
             let destination: VertexProperty = match q.pop() {
                 Some(wrapped) => wrapped.data,
-                // We've exhausted all of our options. It's time to admit
-                // defeat and give it up.
-                // XXX This should ascend instead of break. We should have a
-                // separate check to see if we're at the root, in which case we
-                // can break then as we've exhausted all paths
                 None => {
-                    let parent: indextree::NodeId = self.arena[current]
-                        .parent()
-                        .expect("We should never hit the root");
-                    let parent: &CmdNode = self.arena[parent]
-                        .get();
-
+                    let parent = path.remove_waypoint(&self.arena)
+                        .or(Err(RouteErr::UnableToBacktrack))?;
                     match parent {
                         CmdNode::Choose(_) => {
-                            todo!("implement ascend (e.g., current_route.step_back()!");
+                            // We aren't yet at the root which means we haven't
+                            // exhausted all possible options yet. Give it
+                            // another try.
                             continue
                         },
                         CmdNode::Root => {
-                            println!("impossible constraints! Bailing");
-                            break
+                            //println!("impossible constraints! Bailing. Should we return err instead?");
+                            //break
+                            return Err(RouteErr::Unsat)?;
                         },
                     };
                 },
             };
             let decision: indextree::NodeId = self.arena.new_node(CmdNode::Choose(destination.clone()));
             current.append(decision, &mut self.arena);
-            let source: &CmdNode = &self.arena[current].get();
+            //let source: &CmdNode = &self.arena[current].get();
 
             //
-            // Verify the constraints. We want to make sure that this choice is
-            // valid. If we've made a valid choice, we'll descend a level and
-            // attempt to make more valid choices.
+            // Now we need to verify the current set of constraints. If they're
+            // satisfiable then we will successfully add a new waypoint. If
+            // not, then we'll have to make another decision. Either way, we'll
+            // need to loop around at least one more time.
             //
 
-            if !car.contains(&destination.passenger) &&
-                destination.role == Role::Sink
-            {
-                //
-                // We must be dropping off someone before visiting a
-                // destination.
-                //
-                continue;
-            }
-
-            if car.len() == self.capacity &&
-                destination.role == Role::Source
-            {
-                //
-                // We can't pick someone up if we have no more room.
-                //
-                continue;
-            }
-
-            /*
-            {
-                CmdNode::Choose(data) => data,
-                _ => todo!("figure out how to handle not having a previous vertex uniformly..."),
-            }
-            */
-            // is it planar?
-            // is it dropping someone off?
-            // is it picking someone up with enough room?
-
-            //
-            // Looks good! Enforce the decision.
-            //
-            // XXX we should probably verify .remove()/.insert() and stuff. So that would mean we need to return an error from this function...
-            match destination.role {
-                Role::Sink => {
-                    // XXX does this remove them from 0..max? If not, we'll
-                    // need to wrap it in code that does. Might be the wrong
-                    // level of abstraction.
-                    car.remove(&destination.passenger);
-                },
-                Role::Source => {
-                    car.insert(destination.passenger.clone());
-                },
-            };
-            route_choices.insert(destination.clone());
-            current = decision;
+            path.add_waypoint(destination, decision);
         }
-        println!("route: {:?}", route_choices);
-        println!("smoke weed every day");
+        let route = path.as_path(&self.arena);
+        println!("route: {:?}\n", route);
 
         /*
         // dfs on a ghost tree
@@ -222,7 +183,7 @@ impl Route {
         */
 
 
-        ()
+        Ok(())
     }
 }
 
@@ -316,7 +277,13 @@ fn make_pieces() -> Vec<VertexProperty> {
 fn main() {
     let mut r = Route::new(make_pieces(), 1);
 
-    let soln = r.find_route();
+    loop {
+        let soln = r.find_route();
+        match soln {
+            Err(_) => break,
+            _ => continue,
+        };
+    }
 
     //println!("{:?}", r);
 }
