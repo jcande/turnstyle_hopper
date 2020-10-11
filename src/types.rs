@@ -15,8 +15,8 @@ pub enum Passenger {
 
 #[derive(Eq, PartialEq, Hash, Clone, Debug)]
 pub struct Coord {
-    x: usize,
-    y: usize,
+    pub x: usize,
+    pub y: usize,
 }
 impl Coord {
     pub fn new(x: usize, y: usize) -> Coord {

@@ -15,7 +15,7 @@ pub struct PathState {
 
     // The current state of the car.
     car: HashSet<Passenger>,
-    capacity: usize,
+    capacity: usize, // 1, 2, or 3. I.e., how many passengers can fit in the car
 
     // The set of choices we made that make up the current route.
     // XXX we probably want something like levels but storing VertexProperty so
@@ -26,7 +26,7 @@ pub struct PathState {
 pub enum PathErr {
     InvalidMove,
 
-    RanOutOfWaypoints,
+    OutOfWaypoints,
 }
 
 impl PathState {
@@ -41,8 +41,9 @@ impl PathState {
         }
     }
 
-    pub fn as_path(self, memories: &CmdTree) -> Vec<VertexProperty> {
-        self.levels.into_iter()
+    pub fn get_path(&self, memories: &CmdTree) -> Vec<VertexProperty> {
+        self.levels.clone()
+            .into_iter()
             .skip(1)    // We begin at the Root but that isn't helpful now
             .map(|id: indextree::NodeId| {
                 let node = memories[id].get();
@@ -61,19 +62,35 @@ impl PathState {
         self.choices.len()
     }
 
+    // Current level in the tree
     pub fn current_level(&self) -> Option<&indextree::NodeId> {
         self.levels.last()
     }
 
-    pub fn add_waypoint(&mut self, target: VertexProperty, rung: indextree::NodeId) -> Result<(), PathErr> {
-        // If rung corresponds to CmdNode::Root then all of our logic explodes.
-        // So... don't do that.
+    fn commit_step(&mut self, target: VertexProperty) {
+        match target.role {
+            Role::Sink => {
+                self.car.remove(&target.passenger);
+            },
+            Role::Source => {
+                self.car.insert(target.passenger.clone());
+            },
+        };
 
-        self.verify_step(&target)?;
+        self.choices.insert(target);
+    }
 
-        self.commit_step(target, rung)?;
+    fn uncommit_step(&mut self, target: &VertexProperty) {
+        self.choices.remove(&target);
 
-        Ok(())
+        match target.role {
+            Role::Sink => {
+                self.car.insert(target.passenger.clone());
+            },
+            Role::Source => {
+                self.car.remove(&target.passenger);
+            },
+        };
     }
 
     fn verify_step(&self, target: &VertexProperty) -> Result<(), PathErr> {
@@ -107,57 +124,35 @@ impl PathState {
             Ok(())
     }
 
-    fn commit_step(&mut self, target: VertexProperty, rung: indextree::NodeId) -> Result<(), PathErr> {
-        // TODO every remove/insert needs to be checked to see if it succeeded.
+    pub fn add_waypoint(&mut self, target: VertexProperty, rung: indextree::NodeId) -> Result<(), PathErr> {
+        // If rung corresponds to CmdNode::Root then all of our logic explodes.
+        // So... don't do that.
 
-        match target.role {
-            Role::Sink => {
-                // XXX does this remove them from 0..max? If not, we'll
-                // need to wrap it in code that does. Might be the wrong
-                // level of abstraction.
-                self.car.remove(&target.passenger);
-            },
-            Role::Source => {
-                self.car.insert(target.passenger.clone());
-            },
-        };
+        self.verify_step(&target)?;
 
-        self.choices.insert(target);
+        self.commit_step(target);
+
         self.levels.push(rung);
 
         Ok(())
     }
 
-    // XXX should this return the top (last successful) NodeId?
     pub fn remove_waypoint<'a>(&mut self, memories: &'a CmdTree) -> Result<&'a CmdNode, PathErr> {
-        // TODO every remove/insert needs to be checked to see if it succeeded.
-
         // N.B., we should always have at least the initial CmdNode::Root.
         assert!(self.levels.len() >= 1);
         if self.levels.len() == 1 {
-            return Err(PathErr::RanOutOfWaypoints);
+            return Err(PathErr::OutOfWaypoints);
         }
 
-        let node = self.levels.pop()
-                .ok_or(PathErr::RanOutOfWaypoints)?;
-        let node: &CmdNode = memories[node].get();
+        let node_id = self.levels.pop()
+                .expect("We should always have an item at this point");
+        let node: &CmdNode = memories[node_id].get();
         let target = match node {
             CmdNode::Choose(destination) => destination,
-            // XXX We should bail out after the assert above and never reach
-            // this.
-            Root => panic!("We should not have Root in our path"),
+            CmdNode::Root => panic!("We should not have Root in our path"),
         };
 
-        self.choices.remove(&target);
-
-        match target.role {
-            Role::Sink => {
-                self.car.insert(target.passenger.clone());
-            },
-            Role::Source => {
-                self.car.remove(&target.passenger);
-            },
-        };
+        uncommit_step();
 
         Ok(node)
     }

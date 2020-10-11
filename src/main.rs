@@ -1,27 +1,31 @@
 use std::collections::BinaryHeap;
 use std::collections::HashSet;
 
-mod types;
-use self::types::{Role, Passenger, Coord, OrderByPassenger, VertexProperty};
-
 mod cmd_tree;
 use self::cmd_tree::{CmdTree, CmdNode, CmdNodeId};
+
+mod level;
+use self::level::{Level};
 
 mod path_state;
 use self::path_state::{PathState};
 
+mod types;
+use self::types::{Role, Passenger, Coord, OrderByPassenger, VertexProperty};
+
 
 #[derive(Debug)]
 struct Route {
-    pieces: HashSet<VertexProperty>,
+    level: Level,
 
-    capacity: usize, // 1, 2, or 3. I.e., how many passengers can fit in the car
     // board layout, basically a HxW and coordinates of holes we can't drive on. Also start and end spots
 
     // found solutions, so we don't bother the user with the same stuff
     // use the tree for that
     arena: CmdTree,
     root: CmdNodeId,
+
+    path: PathState,
 }
 
 enum RouteErr {
@@ -39,22 +43,26 @@ impl Route {
     // XXX maybe a builder pattern to take in the various components
     // [Nodes], capacity, heigh, width, start coord, end coord
     // verify each node coord fits in HxW
-    pub fn new(pieces: Vec<VertexProperty>, capacity: usize) -> Route {
+    pub fn new(level: Level) -> Route {
         // just for the time being
-        assert!(capacity == 1);
-        // assert!(pieces are unique);
+        assert!(level.capacity == 1);
+        // assert!(level.pieces are unique);
 
         let mut cmds = CmdTree::new();
         let root = cmds.new_node(CmdNode::Root);
 
         Route {
-            pieces: pieces.into_iter().collect(),
+            path: PathState::new(root, level.capacity),
 
-            capacity: 1,
+            level: level,
 
             arena: cmds,
             root: root,
         }
+    }
+
+    pub fn path_count(&self) -> usize {
+        self.arena.count()
     }
 
     //
@@ -68,19 +76,21 @@ impl Route {
     //
 
     pub fn find_route(&mut self) -> Result<(), RouteErr> {
+        let mut debug = false;
+
         // We should at least have a root node from the constructor
         assert!(!self.arena.is_empty());
-        let mut path = PathState::new(self.root, self.capacity);
-        while path.len() != self.pieces.len() {
+
+        while self.path.len() != self.level.pieces.len() {
             //
             // Figure out what choices we've made in the past.
             //
-            let current = path.current_level()
+            let current = self.path.current_level()
                 .ok_or(RouteErr::ImpossibleLevel)?;
             let mut past_choices: HashSet<VertexProperty> = HashSet::new();
             if let Some(first_of_kin) = &self.arena[*current].first_child() {
-                for childId in first_of_kin.following_siblings(&self.arena) {
-                    if let CmdNode::Choose(passenger_type) = &self.arena[childId].get() {
+                for child_id in first_of_kin.following_siblings(&self.arena) {
+                    if let CmdNode::Choose(passenger_type) = &self.arena[child_id].get() {
                         past_choices.insert(passenger_type.clone());
                     } else {
                         // We can only get here if we are hitting the root which we never should
@@ -94,18 +104,23 @@ impl Route {
             // we're at it, remove the choices that we've already made during
             // this particular route.
             //
-            let remaining_choices: HashSet<VertexProperty> = self.pieces
+            let remaining_choices: HashSet<VertexProperty> = self.level.pieces
                 .difference(&past_choices)
                 .cloned()
                 .collect();
             let remaining_choices: HashSet<VertexProperty> = remaining_choices
-                .difference(&path.choices)
+                .difference(&self.path.choices)
                 .cloned()
                 .collect();
             let mut q: BinaryHeap<OrderByPassenger> = remaining_choices
                 .into_iter()
                 .map(|node| OrderByPassenger::new(node.clone()))
                 .collect();
+                /*
+            if debug {
+                println!("{}: options: {:?}", path.len(), q);
+            }
+            */
 
             //
             // We've made our choice. Add it to the ledger so we don't need to
@@ -117,7 +132,7 @@ impl Route {
             let destination: VertexProperty = match q.pop() {
                 Some(wrapped) => wrapped.data,
                 None => {
-                    let parent = path.remove_waypoint(&self.arena)
+                    let parent = self.path.remove_waypoint(&self.arena)
                         .or(Err(RouteErr::UnableToBacktrack))?;
                     match parent {
                         CmdNode::Choose(_) => {
@@ -138,6 +153,13 @@ impl Route {
             current.append(decision, &mut self.arena);
             //let source: &CmdNode = &self.arena[current].get();
 
+            if self.path.len() == 0 &&
+                destination.passenger == Passenger::Orange &&
+                destination.coord.x == 2 {
+                    //println!("Choose one of the proper oranges for our starting run!");
+                    //debug = true;
+            }
+
             //
             // Now we need to verify the current set of constraints. If they're
             // satisfiable then we will successfully add a new waypoint. If
@@ -145,49 +167,25 @@ impl Route {
             // need to loop around at least one more time.
             //
 
-            path.add_waypoint(destination, decision);
+            let _ = self.path.add_waypoint(destination, decision);
+
+            // deeper verification here?
         }
-        let route = path.as_path(&self.arena);
-        println!("route: {:?}\n", route);
+        //let route = self.path.get_path(&self.arena);
+        //println!("route: {:?}\n", route);
 
-        /*
-        // dfs on a ghost tree
-        while src_q and sink_q are nonempty {
-            // Descend the tree 1 layer
-            cmd = make_choice()
 
-            node = match cmd {
-                dequeue (src) => src_q.dequeue()
-                dequeue (sink) => sink_q.dequeue()
-            }
-
-            if (cmd, node) in current_layer.cmds {
-                // already tried this
-                rise() // ascend 1 layer
-                continue;
-            }
-
-            verify_constraints(node).with_current_state();
-            if (invalid) {
-                current_layer.set(Invalid)
-                rise() // ascend 1 layer
-                contineu;
-            }
-        }
-
-        // ascend back up the tree and restore the full state. We need to do
-        // this in case this solution can't be projected onto the board.
-        restore();
-
-        return route
-        */
-
+        // We've reached the leaves of the tree. Take a step back because if
+        // this is not the right solution then we'll greedily try another path
+        // at this same level.
+        // XXX we should probably check for a weird error though (like .remove() failed or something)
+        let _ = self.path.remove_waypoint(&self.arena);
 
         Ok(())
     }
 }
 
-fn make_pieces() -> Vec<VertexProperty> {
+fn make_level() -> Level {
     // andromeda 14
 
     let mut pieces = Vec::new();
@@ -270,12 +268,34 @@ fn make_pieces() -> Vec<VertexProperty> {
         coord: Coord::new(6, 7),
     });
 
-    pieces
+    /*
+    A solution
+
+    (2, 6): orange source
+    (6, 3)
+    (0, 4): purple source
+    (3, 8)
+    (0, 8): purple source
+    (4, 3)
+    (2, 4): orange source
+    (4, 5)
+    (4, 10): purple source
+    (4, 7)
+    (8, 5): orange source
+    (6, 7)
+    (8, 10): purple source
+    (8, 7)
+    */
+
+    let level = Level::default()
+        .with_pieces(pieces);
+
+    level
 }
 
 
 fn main() {
-    let mut r = Route::new(make_pieces(), 1);
+    let mut r = Route::new(make_level());
 
     loop {
         let soln = r.find_route();
@@ -285,5 +305,5 @@ fn main() {
         };
     }
 
-    //println!("{:?}", r);
+    println!("paths: {:?}", r.path_count());
 }
