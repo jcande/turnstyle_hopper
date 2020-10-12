@@ -51,6 +51,10 @@ impl Level {
     pub fn with_pieces(mut self, pieces: Vec<VertexProperty>) -> Level {
         // assert!() all pieces.coord within self.height/self.width
         // assert!() all pieces are unique (pieces.len() same as hashset.len())
+        // assert!() all pieces.role are {Role::Source, Role::Sink} only
+        // XXX we should have a different type to VertexProperty and then
+        // convert it into VertexProperty in this function. This would simplify
+        // our verification throughout the code.
         self.pieces = pieces.into_iter().collect();
         self
     }
@@ -61,12 +65,17 @@ impl Level {
     }
 
     pub fn with_start(mut self, start: Coord) -> Level {
+        // XXX And we could just add start to pieces
         self.start = start;
         self
     }
 
     pub fn with_end(mut self, end: Coord) -> Level {
+        // XXX And we could just add end to pieces
         self.end = end;
         self
     }
+
+    // TODO with_obstacles
+    // TODO with_blackhole, etc
 }

@@ -17,9 +17,6 @@ pub struct PathState {
     car: HashSet<Passenger>,
     capacity: usize, // 1, 2, or 3. I.e., how many passengers can fit in the car
 
-    // The set of choices we made that make up the current route.
-    // XXX we probably want something like levels but storing VertexProperty so
-    // we can rebuild the path simply.
     pub choices: HashSet<VertexProperty>
 }
 
@@ -68,13 +65,14 @@ impl PathState {
     }
 
     fn commit_step(&mut self, target: VertexProperty) {
-        match target.role {
-            Role::Sink => {
-                self.car.remove(&target.passenger);
+        match &target.role {
+            Role::Sink(passenger) => {
+                self.car.remove(&passenger);
             },
-            Role::Source => {
-                self.car.insert(target.passenger.clone());
+            Role::Source(passenger) => {
+                self.car.insert(passenger.clone());
             },
+            _ => panic!("we only handle source/sinks"),
         };
 
         self.choices.insert(target);
@@ -83,13 +81,14 @@ impl PathState {
     fn uncommit_step(&mut self, target: &VertexProperty) {
         self.choices.remove(&target);
 
-        match target.role {
-            Role::Sink => {
-                self.car.insert(target.passenger.clone());
+        match &target.role {
+            Role::Sink(passenger) => {
+                self.car.insert(passenger.clone());
             },
-            Role::Source => {
-                self.car.remove(&target.passenger);
+            Role::Source(passenger) => {
+                self.car.remove(&passenger);
             },
+            _ => panic!("we only handle source/sinks"),
         };
     }
 
@@ -100,31 +99,33 @@ impl PathState {
             // attempt to make more valid choices.
             //
 
-            if !self.car.contains(&target.passenger) &&
-                target.role == Role::Sink
-            {
-                //
-                // We must be dropping off someone before visiting a
-                // destination.
-                //
-                Err(PathErr::InvalidMove)?;
-            }
-
-            if self.car.len() == self.capacity &&
-                target.role == Role::Source
-            {
-                //
-                // We can't pick someone up if we have no more room.
-                //
-                Err(PathErr::InvalidMove)?;
-            }
+            match &target.role {
+                Role::Sink(passenger) => {
+                    if !self.car.contains(&passenger) {
+                        //
+                        // We must be dropping off someone before visiting a
+                        // destination.
+                        //
+                        Err(PathErr::InvalidMove)?;
+                    }
+                },
+                Role::Source(_) => {
+                    if self.car.len() == self.capacity {
+                        //
+                        // We can't pick someone up if we have no more room.
+                        //
+                        Err(PathErr::InvalidMove)?;
+                    }
+                },
+                _ => panic!("we only handle source/sinks"),
+            };
 
             // TODO is it planar? Wrong layer?
 
             Ok(())
     }
 
-    pub fn add_waypoint(&mut self, target: VertexProperty, rung: indextree::NodeId) -> Result<(), PathErr> {
+    pub fn push_waypoint(&mut self, target: VertexProperty, rung: indextree::NodeId) -> Result<(), PathErr> {
         // If rung corresponds to CmdNode::Root then all of our logic explodes.
         // So... don't do that.
 
@@ -137,7 +138,7 @@ impl PathState {
         Ok(())
     }
 
-    pub fn remove_waypoint<'a>(&mut self, memories: &'a CmdTree) -> Result<&'a CmdNode, PathErr> {
+    pub fn pop_waypoint<'a>(&mut self, memories: &'a CmdTree) -> Result<&'a CmdNode, PathErr> {
         // N.B., we should always have at least the initial CmdNode::Root.
         assert!(self.levels.len() >= 1);
         if self.levels.len() == 1 {
@@ -152,7 +153,7 @@ impl PathState {
             CmdNode::Root => panic!("We should not have Root in our path"),
         };
 
-        uncommit_step();
+        self.uncommit_step(&target);
 
         Ok(node)
     }

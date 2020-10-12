@@ -32,7 +32,7 @@ enum RouteErr {
     // Somehow we ascended beyond the root. This is definitely a bug.
     ImpossibleLevel,
 
-    // Somehow path.remove_waypoint() failed. This is definitely a bug.
+    // Somehow path.pop_waypoint() failed. This is definitely a bug.
     UnableToBacktrack,
 
     // Couldn't solve the map
@@ -76,8 +76,6 @@ impl Route {
     //
 
     pub fn find_route(&mut self) -> Result<(), RouteErr> {
-        let mut debug = false;
-
         // We should at least have a root node from the constructor
         assert!(!self.arena.is_empty());
 
@@ -116,11 +114,6 @@ impl Route {
                 .into_iter()
                 .map(|node| OrderByPassenger::new(node.clone()))
                 .collect();
-                /*
-            if debug {
-                println!("{}: options: {:?}", path.len(), q);
-            }
-            */
 
             //
             // We've made our choice. Add it to the ledger so we don't need to
@@ -132,7 +125,7 @@ impl Route {
             let destination: VertexProperty = match q.pop() {
                 Some(wrapped) => wrapped.data,
                 None => {
-                    let parent = self.path.remove_waypoint(&self.arena)
+                    let parent = self.path.pop_waypoint(&self.arena)
                         .or(Err(RouteErr::UnableToBacktrack))?;
                     match parent {
                         CmdNode::Choose(_) => {
@@ -153,13 +146,6 @@ impl Route {
             current.append(decision, &mut self.arena);
             //let source: &CmdNode = &self.arena[current].get();
 
-            if self.path.len() == 0 &&
-                destination.passenger == Passenger::Orange &&
-                destination.coord.x == 2 {
-                    //println!("Choose one of the proper oranges for our starting run!");
-                    //debug = true;
-            }
-
             //
             // Now we need to verify the current set of constraints. If they're
             // satisfiable then we will successfully add a new waypoint. If
@@ -167,9 +153,22 @@ impl Route {
             // need to loop around at least one more time.
             //
 
-            let _ = self.path.add_waypoint(destination, decision);
+            if self.path.push_waypoint(destination, decision).is_err() {
+                // Unable to add the waypoint, try a new path!
+                continue;
+            }
 
             // deeper verification here?
+            // Make a graph with all possible squares (i.e., the full board
+            // minus the Role::Obstacles) all hooked up in valid ways and try
+            // to plot a path given the new waypoint. If we can't do it, then
+            // we pop the waypoint and continue.
+            // A concern here is how do we know the "full" route that we select
+            // is not the problem as oppose to the PathState route? I don't see
+            // an obvious method to iterate over various full routes in an
+            // attempt to get a working one. The problem with our full route
+            // might only be evident many steps later, how can we know which
+            // section to jiggle? Maybe checking for planarity is enough?
         }
         //let route = self.path.get_path(&self.arena);
         //println!("route: {:?}\n", route);
@@ -179,7 +178,7 @@ impl Route {
         // this is not the right solution then we'll greedily try another path
         // at this same level.
         // XXX we should probably check for a weird error though (like .remove() failed or something)
-        let _ = self.path.remove_waypoint(&self.arena);
+        let _ = self.path.pop_waypoint(&self.arena);
 
         Ok(())
     }
@@ -192,79 +191,65 @@ fn make_level() -> Level {
 
     // purple passengers
     pieces.push(VertexProperty {
-        role: Role::Source,
-        passenger: Passenger::Purple,
+        role: Role::Source(Passenger::Purple),
         coord: Coord::new(4, 0),
     });
     pieces.push(VertexProperty {
-        role: Role::Source,
-        passenger: Passenger::Purple,
+        role: Role::Source(Passenger::Purple),
         coord: Coord::new(8, 0),
     });
     pieces.push(VertexProperty {
-        role: Role::Source,
-        passenger: Passenger::Purple,
+        role: Role::Source(Passenger::Purple),
         coord: Coord::new(4, 10),
     });
     pieces.push(VertexProperty {
-        role: Role::Source,
-        passenger: Passenger::Purple,
+        role: Role::Source(Passenger::Purple),
         coord: Coord::new(8, 10),
     });
 
     // purple sinks
     pieces.push(VertexProperty {
-        role: Role::Sink,
-        passenger: Passenger::Purple,
+        role: Role::Sink(Passenger::Purple),
         coord: Coord::new(4, 3),
     });
     pieces.push(VertexProperty {
-        role: Role::Sink,
-        passenger: Passenger::Purple,
+        role: Role::Sink(Passenger::Purple),
         coord: Coord::new(8, 3),
     });
     pieces.push(VertexProperty {
-        role: Role::Sink,
-        passenger: Passenger::Purple,
+        role: Role::Sink(Passenger::Purple),
         coord: Coord::new(4, 7),
     });
     pieces.push(VertexProperty {
-        role: Role::Sink,
-        passenger: Passenger::Purple,
+        role: Role::Sink(Passenger::Purple),
         coord: Coord::new(8, 7),
     });
 
     // orange passengers
     pieces.push(VertexProperty {
-        role: Role::Source,
-        passenger: Passenger::Orange,
+        role: Role::Source(Passenger::Orange),
         coord: Coord::new(2, 4),
     });
     pieces.push(VertexProperty {
-        role: Role::Source,
-        passenger: Passenger::Orange,
+        role: Role::Source(Passenger::Orange),
         coord: Coord::new(2, 6),
     });
     pieces.push(VertexProperty {
-        role: Role::Source,
-        passenger: Passenger::Orange,
+        role: Role::Source(Passenger::Orange),
         coord: Coord::new(8, 5),
     });
 
     // orange sinks
     pieces.push(VertexProperty {
-        role: Role::Sink,
-        passenger: Passenger::Orange,
+        role: Role::Sink(Passenger::Orange),
         coord: Coord::new(4, 5),
     });
     pieces.push(VertexProperty {
-        role: Role::Sink,
-        passenger: Passenger::Orange,
+        role: Role::Sink(Passenger::Orange),
         coord: Coord::new(6, 3),
     });
     pieces.push(VertexProperty {
-        role: Role::Sink,
-        passenger: Passenger::Orange,
+        role: Role::Sink(Passenger::Orange),
         coord: Coord::new(6, 7),
     });
 
