@@ -256,20 +256,25 @@ fn make_level() -> Level {
     /*
     A solution
 
-    (2, 6): orange source
-    (6, 3)
-    (0, 4): purple source
-    (3, 8)
-    (0, 8): purple source
-    (4, 3)
-    (2, 4): orange source
-    (4, 5)
-    (4, 10): purple source
-    (4, 7)
-    (8, 5): orange source
-    (6, 7)
-    (8, 10): purple source
-    (8, 7)
+    1     (2,  6): orange source {left}
+    2     (6,  3)                {left}
+    3     (0,  4): purple source {right}
+    4     (3,  8)                {right}
+    5     (0,  8): purple source {left}
+    6     (4,  3)                {right}
+    7     (2,  4): orange source {left}
+    8     (4,  5)                {right}
+    9     (4, 10): purple source {left}
+    10    (4,  7)                {right}
+    11    (8,  5): orange source {right}
+    12    (6,  7)                {left}
+    13    (8, 10): purple source {left}
+    14    (8, 7)                 {right}
+
+    left-left:      1
+    right-right:    1
+    left-right:     4
+    right-left:     1
     */
 
     let level = Level::default()
@@ -282,13 +287,14 @@ fn make_level() -> Level {
 fn main() {
     let mut r = Route::new(make_level());
 
+    let mut full_length_paths = 0usize;
     loop {
         let soln = r.find_route();
         match soln {
             Err(_) => break,
-            _ => continue,
+            _ => { full_length_paths += 1; continue },
         };
     }
 
-    println!("paths: {:?}", r.path_count());
+    println!("paths: {:?}, {}", r.path_count(), full_length_paths);
 }

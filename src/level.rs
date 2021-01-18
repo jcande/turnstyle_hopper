@@ -60,6 +60,7 @@ impl Level {
     }
 
     pub fn with_capacity(mut self, capacity: usize) -> Level {
+        // assert!() car with this capacity could even fit in the level
         self.capacity = capacity;
         self
     }
